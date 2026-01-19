@@ -26,11 +26,15 @@ type Frame = {
   y: number;
   width: number;
   height: number;
+  flipH: boolean;
+  flipV: boolean;
 };
 
 type AnimationFrame = {
   frameIndex: number;
   duration: number;
+  flipH: boolean;
+  flipV: boolean;
 };
 
 type LoopStrategy = "Freeze" | "End" | "Loop" | "PingPong";
@@ -39,6 +43,8 @@ type Animation = {
   name: string;
   frames: AnimationFrame[];
   loopStrategy: LoopStrategy;
+  flipH: boolean;
+  flipV: boolean;
 };
 
 const App = () => {
@@ -68,6 +74,9 @@ const App = () => {
   // const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
   // const [currentRect, setCurrentRect] = useState<SourceView | null>(null);
   const [selectedSourceView, setSelectedSourceView] = useState<number | null>(null);
+  const [zoom, setZoom] = useState(1); // 1 = 100%
+  const MIN_ZOOM = 0.25;
+  const MAX_ZOOM = 8;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -83,6 +92,20 @@ const App = () => {
     };
     setSourceViews([...sourceViews, newView]);
     setSelectedSourceView(sourceViews.length);
+  };
+
+  const updateFrame = (animIndex: number, frameIndex: number, patch: Partial<AnimationFrame>) => {
+    //updateFrame(i, frameIdx, { flipH: e.target.checked });
+    setAnimations(prev =>
+      prev.map((a, i) =>
+        i === animIndex
+          ? {
+              ...a,
+              frames: a.frames.map((f, fi) => (fi === frameIndex ? { ...f, ...patch } : f)),
+            }
+          : a,
+      ),
+    );
   };
 
   const updateSourceView = (index: number, updates: Partial<SourceView>) => {
@@ -126,6 +149,8 @@ const App = () => {
           y: gridConfig.originOffset.y + row * (gridConfig.spriteHeight + gridConfig.margin.y),
           width: gridConfig.spriteWidth,
           height: gridConfig.spriteHeight,
+          flipH: false,
+          flipV: false,
         });
         index++;
       }
@@ -142,6 +167,8 @@ const App = () => {
       y: sv.y,
       width: sv.width,
       height: sv.height,
+      flipH: false,
+      flipV: false,
     }));
     setFrames(newFrames);
   };
@@ -152,43 +179,34 @@ const App = () => {
     } else if (parseMode === "sourceview") {
       parseSourceViewFrames();
     }
-  }, [parseMode, gridConfig, sourceViews, image]);
+  }, [parseMode, gridConfig, sourceViews, image, zoom]);
 
-  // Draw spritesheet with frame overlays
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !image) return;
-
-    const ctx = canvas.getContext("2d");
+    if (!canvasRef.current || !image) return;
+    const ctx = canvasRef.current.getContext("2d");
     if (!ctx) return;
 
-    canvas.width = image.width;
-    canvas.height = image.height;
+    canvasRef.current.width = image.width * zoom;
+    canvasRef.current.height = image.height * zoom;
 
+    ctx.setTransform(zoom, 0, 0, zoom, 0, 0); // scale everything
+    ctx.clearRect(0, 0, image.width, image.height);
     ctx.drawImage(image, 0, 0);
 
-    // Draw frame overlays
     frames.forEach(frame => {
       ctx.strokeStyle = "#00ff00";
       ctx.lineWidth = 2;
       ctx.strokeRect(frame.x, frame.y, frame.width, frame.height);
 
-      ctx.fillStyle = "rgba(0, 255, 0, 0.2)";
+      ctx.fillStyle = "rgba(0,255,0,0.2)";
       ctx.fillRect(frame.x, frame.y, frame.width, frame.height);
 
-      ctx.fillStyle = "#00ff00";
+      ctx.fillStyle = "#ffee00";
       ctx.font = "bold 14px monospace";
       ctx.fillText(frame.index.toString(), frame.x + 4, frame.y + 16);
     });
 
-    // Draw current drawing rectangle
-    // if (currentRect && parseMode === "sourceview") {
-    //   ctx.strokeStyle = "#ffff00";
-    //   ctx.lineWidth = 2;
-    //   ctx.strokeRect(currentRect.x, currentRect.y, currentRect.width, currentRect.height);
-    // }
-
-    // Highlight selected source view
+    // highlight selected sourceView if needed
     if (selectedSourceView !== null && parseMode === "sourceview") {
       const sv = sourceViews[selectedSourceView];
       if (sv) {
@@ -197,63 +215,34 @@ const App = () => {
         ctx.strokeRect(sv.x, sv.y, sv.width, sv.height);
       }
     }
-  }, [image, frames, selectedSourceView, parseMode]);
+  }, [image, frames, zoom, selectedSourceView, sourceViews, parseMode]);
 
   useEffect(() => {
     setCurrentFrameIdx(0);
   }, [selectedAnimation, animations[selectedAnimation || 0]?.frames.length]);
 
+  function getImageCoords(e: React.MouseEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement, zoom: number) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) / zoom,
+      y: (e.clientY - rect.top) / zoom,
+    };
+  }
+
   // Canvas mouse handlers for irregular mode
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!canvasRef.current || !image || selectedAnimation === null) return;
+
     const canvas = canvasRef.current;
-    if (!canvas || !image) return;
+    const { x, y } = getImageCoords(e, canvas, zoom);
 
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.floor((e.clientX - rect.left) * (canvas.width / rect.width));
-    const y = Math.floor((e.clientY - rect.top) * (canvas.height / rect.height));
+    // Find the frame under the cursor
+    const clickedFrame = frames.find(f => x >= f.x && x < f.x + f.width && y >= f.y && y < f.y + f.height);
 
-    // If an animation is selected, click to add frame
-    if (selectedAnimation !== null) {
-      const clickedFrame = frames.find(f => x >= f.x && x <= f.x + f.width && y >= f.y && y <= f.y + f.height);
-
-      if (clickedFrame) {
-        addFrameToAnimation(selectedAnimation, clickedFrame.index);
-      }
+    if (clickedFrame) {
+      addFrameToAnimation(selectedAnimation, clickedFrame.index);
     }
   };
-
-  // const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-  //   if (!isDrawing || !drawStart || parseMode !== "sourceview") return;
-
-  //   const canvas = canvasRef.current;
-  //   if (!canvas) return;
-
-  //   const rect = canvas.getBoundingClientRect();
-  //   const x = Math.floor((e.clientX - rect.left) * (canvas.width / rect.width));
-  //   const y = Math.floor((e.clientY - rect.top) * (canvas.height / rect.height));
-
-  //   const width = x - drawStart.x;
-  //   const height = y - drawStart.y;
-
-  //   setCurrentRect({
-  //     x: width < 0 ? x : drawStart.x,
-  //     y: height < 0 ? y : drawStart.y,
-  //     width: Math.abs(width),
-  //     height: Math.abs(height),
-  //   });
-  // };
-
-  // const handleCanvasMouseUp = () => {
-  //   if (!isDrawing || !currentRect || parseMode !== "sourceview") return;
-
-  //   if (currentRect.width > 5 && currentRect.height > 5) {
-  //     setSourceViews([...sourceViews, currentRect]);
-  //   }
-
-  //   setIsDrawing(false);
-  //   setDrawStart(null);
-  //   setCurrentRect(null);
-  // };
 
   // Animation management
   const addAnimation = () => {
@@ -261,6 +250,8 @@ const App = () => {
       name: `Animation${animations.length + 1}`,
       frames: [],
       loopStrategy: "Loop",
+      flipH: false,
+      flipV: false,
     };
     setAnimations([...animations, newAnim]);
     setSelectedAnimation(animations.length);
@@ -284,7 +275,12 @@ const App = () => {
 
   const addFrameToAnimation = (animIndex: number, frameIndex: number) => {
     const anim = animations[animIndex];
-    const newFrame: AnimationFrame = { frameIndex, duration: defaultDuration };
+    const newFrame: AnimationFrame = {
+      frameIndex,
+      duration: defaultDuration,
+      flipH: false,
+      flipV: false,
+    };
     updateAnimation(animIndex, {
       frames: [...anim.frames, newFrame],
     });
@@ -439,34 +435,114 @@ const App = () => {
       code += `});\n\n`;
     }
 
-    code += `// Animation definitions\n`;
-    code += `export const ${animationGroupName} = {\n`;
+    const strategyMap: Record<LoopStrategy, string> = {
+      Loop: "Loop",
+      Freeze: "Freeze",
+      End: "End",
+      PingPong: "PingPong",
+    };
 
-    animations.forEach((anim, i) => {
-      const strategyMap: Record<LoopStrategy, string> = {
-        Loop: "Loop",
-        Freeze: "Freeze",
-        End: "End",
-        PingPong: "PingPong",
-      };
+    code += `// Frame graphics (with optional per-frame flipping)\n\n`;
 
-      code += `  ${anim.name}: new Animation({\n`;
-      code += `    frames: [\n`;
+    animations.forEach(anim => {
       anim.frames.forEach((f, fIdx) => {
-        code += `      { graphic: spriteSheet.sprites[${f.frameIndex}], duration: ${f.duration} }`;
-        code += fIdx < anim.frames.length - 1 ? ",\n" : "\n";
-      });
-      code += `    ]`;
-      code += `,\n    strategy: AnimationStrategy.${strategyMap[anim.loopStrategy]}`;
+        const baseName = `${anim.name}_Frame${fIdx}`;
+        const baseGraphic = `${baseName}Graphic`;
 
-      code += `\n  })`;
-      code += i < animations.length - 1 ? ",\n" : "\n";
+        // Base graphic
+        code += `const ${baseGraphic} = spriteSheet.sprites[${f.frameIndex}];\n`;
+
+        // Flipped variant (if needed)
+        if (f.flipH || f.flipV) {
+          const flippedGraphic = `${baseGraphic}Flipped`;
+          code += `const ${flippedGraphic} = ${baseGraphic}.clone();\n`;
+          if (f.flipH) {
+            code += `${flippedGraphic}.flipHorizontal = true;\n`;
+          }
+          if (f.flipV) {
+            code += `${flippedGraphic}.flipVertical = true;\n`;
+          }
+          code += `\n`;
+        }
+      });
     });
 
+    code += `\n`;
+
+    code += `// Animation definitions\n\n`;
+
+    // 1️⃣ Create base animations
+    animations.forEach(anim => {
+      code += `const ${anim.name}Base = new Animation({\n`;
+      code += `  frames: [\n`;
+
+      anim.frames.forEach((f, fIdx) => {
+        const baseGraphic = `${anim.name}_Frame${fIdx}Graphic`;
+        const graphicVar = f.flipH || f.flipV ? `${baseGraphic}Flipped` : baseGraphic;
+
+        code += `    { graphic: ${graphicVar}, duration: ${f.duration} }`;
+        code += fIdx < anim.frames.length - 1 ? ",\n" : "\n";
+      });
+
+      code += `  ],\n`;
+      code += `  strategy: AnimationStrategy.${strategyMap[anim.loopStrategy]}\n`;
+      code += `});\n\n`;
+
+      // Animation-level flipping (unchanged from Issue #1)
+      if (anim.flipH || anim.flipV) {
+        code += `const ${anim.name} = ${anim.name}Base.clone();\n`;
+        if (anim.flipH) {
+          code += `${anim.name}.flipHorizontal = true;\n`;
+        }
+        if (anim.flipV) {
+          code += `${anim.name}.flipVertical = true;\n`;
+        }
+        code += `\n`;
+      } else {
+        code += `const ${anim.name} = ${anim.name}Base;\n\n`;
+      }
+    });
+
+    // 3️⃣ Export object references
+    code += `export const ${animationGroupName} = {\n`;
+    animations.forEach((anim, i) => {
+      code += `  ${anim.name}`;
+      code += i < animations.length - 1 ? ",\n" : "\n";
+    });
     code += `};\n`;
 
     return code;
   };
+
+  useEffect(() => {
+    if (parseMode === "grid") {
+      parseGridFrames(); // recalculates frames
+    } else if (parseMode === "sourceview") {
+      parseSourceViewFrames();
+    }
+  }, [parseMode, gridConfig, sourceViews, image]);
+
+  useEffect(() => {
+    if (!image || !canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const scaledWidth = image.width * zoom;
+    const scaledHeight = image.height * zoom;
+
+    canvas.width = scaledWidth;
+    canvas.height = scaledHeight;
+
+    ctx.imageSmoothingEnabled = false; // important for pixel art
+    ctx.setTransform(zoom, 0, 0, zoom, 0, 0);
+
+    ctx.clearRect(0, 0, image.width, image.height);
+    ctx.drawImage(image, 0, 0);
+
+    // draw grid / selections in *unscaled coordinates*
+  }, [image, zoom]);
 
   const downloadCode = () => {
     const code = generateCode();
@@ -480,14 +556,14 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 p-6">
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-20">
       <div className="max-w-7xl mx-auto">
         <header className="mb-6">
-          <h1 className="text-3xl font-bold text-blue-400">Excalibur Animation Builder</h1>
+          <h1 className="text-3xl font-bold text-blue-400">Excalibur Animation Builder (v2)</h1>
           <p className="text-gray-400 mt-1">Parse spritesheets and generate animation code</p>
         </header>
 
-        <div className="grid grid-cols-12 gap-6">
+        <div className="grid grid-cols-12 gap-4">
           {/* Left Panel - Configuration */}
           <div className="col-span-3 space-y-4">
             <div className="bg-gray-800 rounded-lg p-4">
@@ -703,7 +779,7 @@ const App = () => {
           </div>
 
           {/* Center Panel - Canvas */}
-          <div className="col-span-6">
+          <div className="col-span-5">
             <div className="bg-gray-800 rounded-lg p-4">
               <h2 className="text-lg font-semibold mb-1">Spritesheet</h2>
               <p className="text-xs text-gray-400 mb-3">
@@ -711,7 +787,31 @@ const App = () => {
                   ? "Click a frame to add it to the selected animation."
                   : "Select an animation on the right to start adding frames."}
               </p>
-              <div className="bg-gray-900 rounded overflow-auto" style={{ maxHeight: "600px" }}>
+              <div className="flex items-center gap-2 mb-2 text-sm">
+                <span className="text-gray-400">Zoom</span>
+
+                <button
+                  onClick={() => setZoom(z => Math.max(MIN_ZOOM, z / 1.25))}
+                  className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded"
+                >
+                  −
+                </button>
+
+                <span className="w-12 text-center">{Math.round(zoom * 100)}%</span>
+
+                <button
+                  onClick={() => setZoom(z => Math.min(MAX_ZOOM, z * 1.25))}
+                  className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded"
+                >
+                  +
+                </button>
+
+                <button onClick={() => setZoom(1)} className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded ml-2">
+                  Reset
+                </button>
+              </div>
+
+              <div className="bg-gray-900 rounded overflow-auto" style={{ maxHeight: "700px" }}>
                 {image && <canvas ref={canvasRef} className="cursor-pointer" onMouseDown={handleCanvasMouseDown} />}
               </div>
             </div>
@@ -748,8 +848,8 @@ const App = () => {
           </div>
 
           {/* Right Panel - Animations */}
-          <div className="col-span-3 space-y-4">
-            <div className="bg-gray-800 rounded-lg p-4">
+          <div className="col-span-4 space-y-4">
+            <div className="bg-gray-800 rounded-lg p-3">
               <h2 className="text-lg font-semibold mb-3">3. Animations</h2>
               <div>
                 <label className="text-sm text-gray-400">Group Name</label>
@@ -765,8 +865,8 @@ const App = () => {
                 <input
                   type="number"
                   value={defaultDuration}
-                  onChange={e => setDefaultDuration(parseInt(e.target.value) || 0)}
-                  className="w-full bg-gray-700 px-3 py-1 rounded mt-1"
+                  onChange={e => setDefaultDuration(parseInt(e.target.value) || 150)}
+                  className="w-full bg-gray-700 px-3 py-1 rounded mt-1 mb-2"
                 />
               </div>
 
@@ -790,7 +890,7 @@ const App = () => {
                     setIsPlaying(false);
                   }}
                 >
-                  <div className="flex justify-between items-center mb-2">
+                  <div className="flex justify-between items-center mb-1">
                     <input
                       type="text"
                       value={anim.name}
@@ -810,6 +910,34 @@ const App = () => {
                     >
                       <Trash2 size={16} />
                     </button>
+                  </div>
+
+                  <div className="flex gap-3 mb-2">
+                    <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={!!anim.flipH}
+                        onChange={e => {
+                          e.stopPropagation();
+                          updateAnimation(i, { flipH: e.target.checked });
+                        }}
+                        className="accent-gray-500"
+                      />
+                      Flip H
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={!!anim.flipV}
+                        onChange={e => {
+                          e.stopPropagation();
+                          updateAnimation(i, { flipV: e.target.checked });
+                        }}
+                        className="accent-gray-500"
+                      />
+                      Flip V
+                    </label>
                   </div>
 
                   <div className="mb-2">
@@ -834,11 +962,46 @@ const App = () => {
 
                   {selectedAnimation === i && (
                     <div className="space-y-2 mt-3 pt-3 border-t border-gray-700">
-                      <div className="text-sm font-semibold mb-2">Frames</div>
+                      <div className="text-sm font-semibold mb-2">Frames - click framed images on spritesheet to edit</div>
                       {anim.frames.map((frame, frameIdx) => (
                         <div key={frameIdx} className="flex items-center gap-2 bg-gray-700 p-2 rounded">
                           <GripVertical size={14} className="text-gray-500" />
                           <span className="text-sm flex-1">Frame {frame.frameIndex}</span>
+                          <div className="flex gap-2">
+                            <label
+                              className="flex items-center gap-1 text-xs text-gray-400 cursor-pointer"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!!frame.flipH}
+                                title="Flip Horizontal"
+                                onChange={e => {
+                                  e.stopPropagation();
+                                  updateFrame(i, frameIdx, { flipH: e.target.checked });
+                                }}
+                                className="accent-gray-500"
+                              />
+                              H
+                            </label>
+
+                            <label
+                              className="flex items-center gap-1 text-xs text-gray-400 cursor-pointer"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!!frame.flipV}
+                                title="Flip Vertical"
+                                onChange={e => {
+                                  e.stopPropagation();
+                                  updateFrame(i, frameIdx, { flipV: e.target.checked });
+                                }}
+                                className="accent-gray-500"
+                              />
+                              V
+                            </label>
+                          </div>
                           <input
                             type="number"
                             value={frame.duration}
@@ -862,7 +1025,7 @@ const App = () => {
                         </div>
                       ))}
 
-                      <div className="pt-2">
+                      {/* <div className="pt-2">
                         <label className="text-xs text-gray-400 mb-1 block">Add Frame</label>
                         <select
                           onChange={e => {
@@ -885,7 +1048,7 @@ const App = () => {
                             </option>
                           ))}
                         </select>
-                      </div>
+                      </div> */}
                     </div>
                   )}
                 </div>

@@ -138,6 +138,16 @@ const App = () => {
         setParseMode(null);
         setFrames([]);
         setSourceViews([]);
+        
+        // Auto-calculate rows and columns based on image dimensions
+        const calculatedColumns = Math.floor(img.width / gridConfig.spriteWidth);
+        const calculatedRows = Math.floor(img.height / gridConfig.spriteHeight);
+        
+        setGridConfig(prev => ({
+          ...prev,
+          rows: calculatedRows > 0 ? calculatedRows : 1,
+          columns: calculatedColumns > 0 ? calculatedColumns : 1,
+        }));
       };
       img.src = event.target?.result as string;
     };
@@ -169,6 +179,20 @@ const App = () => {
     setFrames(newFrames);
   };
 
+  // Auto-recalculate rows and columns when sprite dimensions change
+  useEffect(() => {
+    if (!image) return;
+    
+    const calculatedColumns = Math.floor(image.width / gridConfig.spriteWidth);
+    const calculatedRows = Math.floor(image.height / gridConfig.spriteHeight);
+    
+    setGridConfig(prev => ({
+      ...prev,
+      rows: calculatedRows > 0 ? calculatedRows : 1,
+      columns: calculatedColumns > 0 ? calculatedColumns : 1,
+    }));
+  }, [gridConfig.spriteWidth, gridConfig.spriteHeight, image]);
+
   // Parse frames from source views
   const parseSourceViewFrames = () => {
     const newFrames: Frame[] = sourceViews.map((sv, index) => ({
@@ -189,7 +213,7 @@ const App = () => {
     } else if (parseMode === "sourceview") {
       parseSourceViewFrames();
     }
-  }, [parseMode, gridConfig, sourceViews, image, zoom]);
+  }, [parseMode, gridConfig, sourceViews, image]);
 
   useEffect(() => {
     if (!canvasRef.current || !image) return;
@@ -203,18 +227,36 @@ const App = () => {
     ctx.clearRect(0, 0, image.width, image.height);
     ctx.drawImage(image, 0, 0);
 
-    frames.forEach(frame => {
-      ctx.strokeStyle = "#00ff00";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(frame.x, frame.y, frame.width, frame.height);
+    // Only highlight frames that are in the selected animation
+    if (selectedAnimation !== null) {
+      const anim = animations[selectedAnimation];
+      if (anim) {
+        // Create a map to track the latest occurrence of each sprite index
+        const latestOccurrences = new Map<number, number>();
+        
+        anim.frames.forEach((animFrame, idx) => {
+          // Always update to the latest (last) index for this sprite
+          latestOccurrences.set(animFrame.frameIndex, idx);
+        });
+        
+        // Now draw only the latest occurrences
+        latestOccurrences.forEach((animIdx, spriteIdx) => {
+          const frame = frames[spriteIdx];
+          if (!frame) return;
 
-      ctx.fillStyle = "rgba(0,255,0,0.2)";
-      ctx.fillRect(frame.x, frame.y, frame.width, frame.height);
+          ctx.strokeStyle = "#00ff00";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(frame.x, frame.y, frame.width, frame.height);
 
-      ctx.fillStyle = "#ffee00";
-      ctx.font = "bold 14px monospace";
-      ctx.fillText(frame.index.toString(), frame.x + 4, frame.y + 16);
-    });
+          ctx.fillStyle = "rgba(0,255,0,0.2)";
+          ctx.fillRect(frame.x, frame.y, frame.width, frame.height);
+
+          ctx.fillStyle = "#ffee00";
+          ctx.font = "bold 14px monospace";
+          ctx.fillText(animIdx.toString(), frame.x + 4, frame.y + 16);
+        });
+      }
+    }
 
     // highlight selected sourceView if needed
     if (selectedSourceView !== null && parseMode === "sourceview") {
@@ -225,7 +267,7 @@ const App = () => {
         ctx.strokeRect(sv.x, sv.y, sv.width, sv.height);
       }
     }
-  }, [image, frames, zoom, selectedSourceView, sourceViews, parseMode]);
+  }, [image, frames, zoom, selectedSourceView, sourceViews, parseMode, selectedAnimation, animations]);
 
   useEffect(() => {
     setCurrentFrameIdx(0);
@@ -250,7 +292,21 @@ const App = () => {
     const clickedFrame = frames.find(f => x >= f.x && x < f.x + f.width && y >= f.y && y < f.y + f.height);
 
     if (clickedFrame) {
-      addFrameToAnimation(selectedAnimation, clickedFrame.index);
+      const anim = animations[selectedAnimation];
+      
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+Click: Remove the LAST occurrence of this frame
+        const lastIndex = anim.frames.map((f, i) => ({ frameIndex: f.frameIndex, idx: i }))
+          .filter(f => f.frameIndex === clickedFrame.index)
+          .pop()?.idx;
+        
+        if (lastIndex !== undefined) {
+          removeFrameFromAnimation(selectedAnimation, lastIndex);
+        }
+      } else {
+        // Normal click: Always add the frame (allows duplicates)
+        addFrameToAnimation(selectedAnimation, clickedFrame.index);
+      }
     }
   };
 
@@ -637,7 +693,7 @@ const App = () => {
                   <input
                     type="number"
                     value={gridConfig.spriteWidth}
-                    onChange={e => setGridConfig({ ...gridConfig, spriteWidth: parseInt(e.target.value) || 0 })}
+                    onChange={e => setGridConfig({ ...gridConfig, spriteWidth: parseInt(e.target.value) || 1 })}
                     className="w-full bg-gray-700 px-3 py-1 rounded mt-1"
                   />
                 </div>
@@ -646,7 +702,7 @@ const App = () => {
                   <input
                     type="number"
                     value={gridConfig.spriteHeight}
-                    onChange={e => setGridConfig({ ...gridConfig, spriteHeight: parseInt(e.target.value) || 0 })}
+                    onChange={e => setGridConfig({ ...gridConfig, spriteHeight: parseInt(e.target.value) || 1 })}
                     className="w-full bg-gray-700 px-3 py-1 rounded mt-1"
                   />
                 </div>
@@ -808,8 +864,8 @@ const App = () => {
               <h2 className="text-lg font-semibold mb-1">Spritesheet</h2>
               <p className="text-xs text-gray-400 mb-3">
                 {selectedAnimation !== null
-                  ? "Click a frame to add it to the selected animation."
-                  : "Select an animation on the right to start adding frames."}
+                  ? "Click to add frames (duplicates allowed). Ctrl+Click to remove last occurrence. Trash icon removes specific frame."
+                  : "Create and select an animation on the right to start adding frames."}
               </p>
               <div className="flex items-center gap-2 mb-2 text-sm">
                 <span className="text-gray-400">Zoom</span>
@@ -1006,15 +1062,25 @@ const App = () => {
                     </select>
                   </div>
 
-                  <div className="text-xs text-gray-400 mb-2">{anim.frames.length} frames</div>
+                  <div className="text-xs text-gray-400 mb-2">Selected: {anim.frames.length} frame{anim.frames.length !== 1 ? 's' : ''}</div>
 
                   {selectedAnimation === i && (
                     <div className="space-y-2 mt-3 pt-3 border-t border-gray-700">
-                      <div className="text-sm font-semibold mb-2">Frames - click framed images on spritesheet to edit</div>
+                      <div className="text-sm font-semibold mb-2">
+                        Selected Frames ({anim.frames.length})
+                        <p className="text-xs text-gray-400 font-normal mt-1">Click to add, Ctrl+Click to remove last occurrence</p>
+                      </div>
+                      {anim.frames.length === 0 && (
+                        <div className="text-center py-4 text-gray-500 text-xs">
+                          No frames selected. Click frames on the spritesheet to add them.
+                        </div>
+                      )}
                       {anim.frames.map((frame, frameIdx) => (
                         <div key={frameIdx} className="flex items-center gap-2 bg-gray-700 p-2 rounded">
                           <GripVertical size={14} className="text-gray-500" />
-                          <span className="text-sm flex-1">Frame {frame.frameIndex}</span>
+                          <span className="text-sm flex-1">
+                            <span className="text-gray-400">#{frameIdx}</span> (sprite {frame.frameIndex})
+                          </span>
                           <div className="flex gap-2">
                             <label
                               className="flex items-center gap-1 text-xs text-gray-400 cursor-pointer"
@@ -1067,36 +1133,12 @@ const App = () => {
                               removeFrameFromAnimation(i, frameIdx);
                             }}
                             className="text-red-400 hover:text-red-300"
+                            title="Remove frame"
                           >
                             <Trash2 size={14} />
                           </button>
                         </div>
                       ))}
-
-                      {/* <div className="pt-2">
-                        <label className="text-xs text-gray-400 mb-1 block">Add Frame</label>
-                        <select
-                          onChange={e => {
-                            const frameIndex = parseInt(e.target.value);
-                            if (!isNaN(frameIndex)) {
-                              addFrameToAnimation(i, frameIndex);
-                              e.target.value = "";
-                            }
-                          }}
-                          onClick={e => e.stopPropagation()}
-                          className="w-full bg-gray-700 px-2 py-1 rounded text-sm"
-                          defaultValue=""
-                        >
-                          <option value="" disabled>
-                            Select frame...
-                          </option>
-                          {frames.map(f => (
-                            <option key={f.index} value={f.index}>
-                              Frame {f.index}
-                            </option>
-                          ))}
-                        </select>
-                      </div> */}
                     </div>
                   )}
                 </div>

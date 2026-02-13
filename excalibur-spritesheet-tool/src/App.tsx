@@ -138,11 +138,11 @@ const App = () => {
         setParseMode(null);
         setFrames([]);
         setSourceViews([]);
-        
+
         // Auto-calculate rows and columns based on image dimensions
         const calculatedColumns = Math.floor(img.width / gridConfig.spriteWidth);
         const calculatedRows = Math.floor(img.height / gridConfig.spriteHeight);
-        
+
         setGridConfig(prev => ({
           ...prev,
           rows: calculatedRows > 0 ? calculatedRows : 1,
@@ -182,10 +182,10 @@ const App = () => {
   // Auto-recalculate rows and columns when sprite dimensions change
   useEffect(() => {
     if (!image) return;
-    
+
     const calculatedColumns = Math.floor(image.width / gridConfig.spriteWidth);
     const calculatedRows = Math.floor(image.height / gridConfig.spriteHeight);
-    
+
     setGridConfig(prev => ({
       ...prev,
       rows: calculatedRows > 0 ? calculatedRows : 1,
@@ -233,12 +233,12 @@ const App = () => {
       if (anim) {
         // Create a map to track the latest occurrence of each sprite index
         const latestOccurrences = new Map<number, number>();
-        
+
         anim.frames.forEach((animFrame, idx) => {
           // Always update to the latest (last) index for this sprite
           latestOccurrences.set(animFrame.frameIndex, idx);
         });
-        
+
         // Now draw only the latest occurrences
         latestOccurrences.forEach((animIdx, spriteIdx) => {
           const frame = frames[spriteIdx];
@@ -293,13 +293,14 @@ const App = () => {
 
     if (clickedFrame) {
       const anim = animations[selectedAnimation];
-      
+
       if (e.ctrlKey || e.metaKey) {
         // Ctrl+Click: Remove the LAST occurrence of this frame
-        const lastIndex = anim.frames.map((f, i) => ({ frameIndex: f.frameIndex, idx: i }))
+        const lastIndex = anim.frames
+          .map((f, i) => ({ frameIndex: f.frameIndex, idx: i }))
           .filter(f => f.frameIndex === clickedFrame.index)
           .pop()?.idx;
-        
+
         if (lastIndex !== undefined) {
           removeFrameFromAnimation(selectedAnimation, lastIndex);
         }
@@ -639,7 +640,7 @@ const App = () => {
     <div className="min-h-screen bg-gray-900 text-gray-100 p-20">
       <div className="">
         <header className="mb-6">
-          <h1 className="text-3xl font-bold text-blue-400">Excalibur Animation Builder (v2.4)</h1>
+          <h1 className="text-3xl font-bold text-blue-400">Excalibur Animation Builder (v2.5)</h1>
           <p className="text-gray-400 mt-1">Parse spritesheets and generate animation code</p>
         </header>
 
@@ -1062,7 +1063,9 @@ const App = () => {
                     </select>
                   </div>
 
-                  <div className="text-xs text-gray-400 mb-2">Selected: {anim.frames.length} frame{anim.frames.length !== 1 ? 's' : ''}</div>
+                  <div className="text-xs text-gray-400 mb-2">
+                    Selected: {anim.frames.length} frame{anim.frames.length !== 1 ? "s" : ""}
+                  </div>
 
                   {selectedAnimation === i && (
                     <div className="space-y-2 mt-3 pt-3 border-t border-gray-700">
